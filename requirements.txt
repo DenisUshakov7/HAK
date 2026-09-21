@@ -1,0 +1,7 @@
+geopy>=2.4,<3
+pytest>=8,<10
+ortools>=9.9,<10
+requests>=2.31,<3
+python-dotenv>=1.0,<2
+folium>=0.20,<1
+streamlit>=1.40,<2

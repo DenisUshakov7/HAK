@@ -1,0 +1,9 @@
+[
+  {
+    "source_file": "vostok_synthetic.csv",
+    "address": "г. Москва, ул Юных Ленинцев, д 83с 4",
+    "lat": 55.7004508,
+    "lon": 37.7494938,
+    "geocode_source": "nominatim"
+  }
+]

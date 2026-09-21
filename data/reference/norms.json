@@ -1,0 +1,46 @@
+{
+  "_source": "Нормативы.xlsx, предоставлено заказчиком",
+  "_note": "Длительность_на_месте = Технические_работы + Документы (минуты). Дорога до клиента (20 мин у всех типов) НЕ используется как константа — вместо неё ETL/алгоритм считает реальное время в пути между точками маршрута по геокоординатам и виду транспорта.",
+  "by_bk_type": {
+    "Подключение": {
+      "road_min": 20,
+      "tech_min": 60,
+      "docs_min": 10,
+      "base_norm_min": 90,
+      "duration_on_site_min": 70,
+      "skill": "connect_order",
+      "skill_name_ru": "Работы на подключение и дозаказы",
+      "priority": "Обычная"
+    },
+    "Дозаказ": {
+      "road_min": 20,
+      "tech_min": 10,
+      "docs_min": 10,
+      "base_norm_min": 40,
+      "duration_on_site_min": 20,
+      "skill": "connect_order",
+      "skill_name_ru": "Работы на подключение и дозаказы",
+      "priority": "Обычная"
+    },
+    "Локальная заявка": {
+      "road_min": 20,
+      "tech_min": 30,
+      "docs_min": 0,
+      "base_norm_min": 50,
+      "duration_on_site_min": 30,
+      "skill": "local",
+      "skill_name_ru": "Локальные работы",
+      "priority": "Обычная"
+    },
+    "Глобальная проблема": {
+      "road_min": 20,
+      "tech_min": 80,
+      "docs_min": 0,
+      "base_norm_min": 100,
+      "duration_on_site_min": 80,
+      "skill": "emergency",
+      "skill_name_ru": "Аварийные работы",
+      "priority": "Срочная"
+    }
+  }
+}
