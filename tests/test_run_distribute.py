@@ -1,0 +1,189 @@
+import json
+from pathlib import Path
+
+import pytest
+
+from routing.run_distribute import _parse_args, main, run
+
+OFFICE = {"source_file": "x.csv", "address": "тест", "lat": 55.70, "lon": 37.60, "geocode_source": "nominatim"}
+
+
+def _order(id_, lat, lon, skill, window_start="09:00", window_end="18:00", transport=None):
+    return {
+        "id": id_,
+        "address": "тест",
+        "district": "тест",
+        "lat": lat,
+        "lon": lon,
+        "geocode_source": "nominatim",
+        "duration_min": 10,
+        "window_start": window_start,
+        "window_end": window_end,
+        "date": "2026-08-17",
+        "priority": "Обычная",
+        "required_skill": skill,
+        "required_transport": transport,
+        "gigabit": False,
+        "source_file": "x.csv",
+    }
+
+
+def _engineer(id_, name, skills, vehicle="Пешеход", shift_start="08:00", shift_end="20:00"):
+    return {
+        "id": id_,
+        "name": name,
+        "start_lat": OFFICE["lat"],
+        "start_lon": OFFICE["lon"],
+        "shift_start": shift_start,
+        "shift_end": shift_end,
+        "skills": skills,
+        "vehicle": vehicle,
+    }
+
+
+def _write_inputs(tmp_path):
+    orders_path = tmp_path / "orders.json"
+    engineers_path = tmp_path / "engineers.json"
+    offices_path = tmp_path / "offices.json"
+    orders_path.write_text(
+        json.dumps([_order("1", 55.701, 37.601, "Локальные работы")], ensure_ascii=False), encoding="utf-8"
+    )
+    engineers_path.write_text(
+        json.dumps([_engineer("eng_01", "Тест Тестов", ["Локальные работы"])], ensure_ascii=False),
+        encoding="utf-8",
+    )
+    offices_path.write_text(json.dumps([OFFICE], ensure_ascii=False), encoding="utf-8")
+    return orders_path, engineers_path, offices_path
+
+
+def test_run_writes_assignment_json(tmp_path):
+    orders_path, engineers_path, offices_path = _write_inputs(tmp_path)
+    output_path = tmp_path / "output" / "assignment.json"
+
+    output = run(
+        orders_path=orders_path,
+        engineers_path=engineers_path,
+        offices_path=offices_path,
+        output_path=output_path,
+        force_fallback=True,
+        cache_path=tmp_path / "cache.json",
+    )
+
+    assert output_path.exists()
+    written = json.loads(output_path.read_text(encoding="utf-8"))
+    assert written == output
+    assert output["metrics"]["orders_assigned"] == 1
+    assert output["metrics"]["orders_unassigned"] == 0
+    assert output["routes"][0]["engineer_id"] == "eng_01"
+    assert output["routes"][0]["stops"][0]["order_id"] == "1"
+    assert "reason" in output["routes"][0]["stops"][0]
+
+
+def test_run_reports_unassigned_with_reason(tmp_path):
+    orders_path, engineers_path, offices_path = _write_inputs(tmp_path)
+    orders_path.write_text(
+        json.dumps([_order("1", 55.701, 37.601, "Аварийные работы")], ensure_ascii=False), encoding="utf-8"
+    )
+
+    output = run(
+        orders_path=orders_path,
+        engineers_path=engineers_path,
+        offices_path=offices_path,
+        output_path=tmp_path / "output" / "assignment.json",
+        force_fallback=True,
+        cache_path=tmp_path / "cache.json",
+    )
+
+    assert output["unassigned"] == [
+        {"order_id": "1", "reason": "Нет ни одного инженера с навыком «Аварийные работы»"}
+    ]
+    assert output["metrics"]["engineers_used"] == 0
+
+
+def test_run_raises_clear_error_for_missing_orders_file(tmp_path):
+    _, engineers_path, offices_path = _write_inputs(tmp_path)
+
+    with pytest.raises(FileNotFoundError):
+        run(
+            orders_path=tmp_path / "does_not_exist.json",
+            engineers_path=engineers_path,
+            offices_path=offices_path,
+            output_path=tmp_path / "output" / "assignment.json",
+            force_fallback=True,
+            cache_path=tmp_path / "cache.json",
+        )
+
+
+def test_run_handles_multiple_vehicle_profiles(tmp_path):
+    # Проверяет глину, добавленную именно этим модулем: profiles_needed
+    # собирается как множество профилей реально присутствующих инженеров
+    # (а не все 4 профиля безусловно), и матрица строится для каждого из
+    # них по отдельности — solve() не должен упасть с KeyError на втором
+    # профиле.
+    orders_path = tmp_path / "orders.json"
+    engineers_path = tmp_path / "engineers.json"
+    offices_path = tmp_path / "offices.json"
+    orders_path.write_text(
+        json.dumps(
+            [
+                _order("1", 55.701, 37.601, "Локальные работы"),
+                _order("2", 55.702, 37.602, "Аварийные работы"),
+            ],
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    engineers_path.write_text(
+        json.dumps(
+            [
+                _engineer("eng_01", "Пеший", ["Локальные работы"], vehicle="Пешеход"),
+                _engineer("eng_02", "Авто", ["Аварийные работы"], vehicle="Автомобиль"),
+            ],
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    offices_path.write_text(json.dumps([OFFICE], ensure_ascii=False), encoding="utf-8")
+
+    output = run(
+        orders_path=orders_path,
+        engineers_path=engineers_path,
+        offices_path=offices_path,
+        output_path=tmp_path / "output" / "assignment.json",
+        force_fallback=True,
+        cache_path=tmp_path / "cache.json",
+    )
+
+    assert output["metrics"]["orders_unassigned"] == 0
+    assert output["metrics"]["engineers_used"] == 2
+    assigned_engineers = {route["engineer_id"] for route in output["routes"]}
+    assert assigned_engineers == {"eng_01", "eng_02"}
+
+
+def test_parse_args_defaults():
+    args = _parse_args([])
+    assert args.orders_path == Path("data/output/orders.json")
+    assert args.engineers_path == Path("data/output/engineers.json")
+    assert args.offices_path == Path("data/output/offices.json")
+    assert args.output == Path("data/output/assignment.json")
+    assert args.no_network is False
+
+
+def test_main_prints_clean_error_and_exits_nonzero_for_missing_file(tmp_path, capsys):
+    _, engineers_path, offices_path = _write_inputs(tmp_path)
+
+    with pytest.raises(SystemExit) as exc_info:
+        main(
+            [
+                "--orders-path", str(tmp_path / "does_not_exist.json"),
+                "--engineers-path", str(engineers_path),
+                "--offices-path", str(offices_path),
+                "--output", str(tmp_path / "output" / "assignment.json"),
+                "--no-network",
+            ]
+        )
+
+    assert exc_info.value.code == 1
+    captured = capsys.readouterr()
+    assert "Ошибка" in captured.err
+    assert "Traceback" not in captured.err
