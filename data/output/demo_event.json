@@ -1,0 +1,5 @@
+{
+  "type": "cancel_order",
+  "event_time": "11:00",
+  "order_id": "50219"
+}

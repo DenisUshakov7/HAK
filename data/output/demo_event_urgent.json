@@ -1,0 +1,13 @@
+{
+  "type": "new_urgent_order",
+  "event_time": "11:00",
+  "id": "999",
+  "lat": 55.705,
+  "lon": 37.752,
+  "duration_min": 20,
+  "window_start": "11:00",
+  "window_end": "18:00",
+  "priority": "Срочная",
+  "required_skill": "Локальные работы",
+  "required_transport": null
+}
