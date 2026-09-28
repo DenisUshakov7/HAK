@@ -84,3 +84,67 @@ def test_explain_unassigned_generic_fallback_does_not_claim_multiple_when_one():
     reason = explain_unassigned(order, [engineer])
 
     assert "несколько" not in reason
+
+
+def _travel(minutes):
+    return lambda engineer: minutes
+
+
+def test_explain_unassigned_says_cannot_reach_in_time():
+    order = Order("far", 55.9, 37.6, 10, "09:00", "09:10", "Обычная", "Локальные работы", None)
+    engineer = Engineer("e", "A", *OFFICE, "08:00", "18:00", ["Локальные работы"], "Пешеход")
+
+    reason = explain_unassigned(order, [engineer], _travel(120))
+
+    assert "Не успевает доехать" in reason
+    assert "120" in reason
+
+
+def test_explain_unassigned_says_work_does_not_fit_shift_after_travel():
+    order = Order("late", 55.9, 37.6, 60, "08:00", "18:00", "Обычная", "Локальные работы", None)
+    engineer = Engineer("e", "A", *OFFICE, "08:00", "10:00", ["Локальные работы"], "Пешеход")
+
+    reason = explain_unassigned(order, [engineer], _travel(90))
+
+    assert "не укладывается в смену" in reason
+
+
+def test_explain_unassigned_says_window_closed_before_event():
+    order = Order("gone", 55.7, 37.6, 10, "09:00", "10:00", "Обычная", "Локальные работы", None)
+    engineer = Engineer("e", "A", *OFFICE, "08:00", "18:00", ["Локальные работы"], "Пешеход")
+
+    reason = explain_unassigned(order, [engineer], _travel(5), not_before_min=11 * 60)
+
+    assert "закрылось раньше момента события" in reason and "11:00" in reason
+
+
+def test_explain_unassigned_reachable_engineer_means_busy():
+    order = Order("ok", 55.7, 37.6, 10, "09:00", "18:00", "Обычная", "Локальные работы", None)
+    engineer = Engineer("e", "A", *OFFICE, "08:00", "18:00", ["Локальные работы"], "Пешеход")
+
+    reason = explain_unassigned(order, [engineer], _travel(10))
+
+    assert "заняты другими заявками" in reason
+
+
+def test_explain_unassigned_travel_estimate_uses_only_matching_engineers():
+    # A приезжает к 09:25 (в окно), но не влезает в смену; B опаздывает по
+    # окну. Минимум дороги для «не успевает доехать» берётся только по B.
+    order = Order("x", 55.9, 37.6, 60, "09:00", "09:30", "Обычная", "Локальные работы", None)
+    a = Engineer("a", "A", *OFFICE, "08:00", "10:00", ["Локальные работы"], "Пешеход")
+    b = Engineer("b", "B", *OFFICE, "08:00", "18:00", ["Локальные работы"], "Автомобиль")
+    travel = lambda e: 85 if e.id == "a" else 200  # noqa: E731
+
+    reason = explain_unassigned(order, [a, b], travel)
+
+    assert "от 200 мин" in reason
+    assert "85" not in reason
+
+
+def test_explain_unassigned_window_closed_before_event_without_travel_data():
+    order = Order("gone", 55.7, 37.6, 10, "09:00", "10:00", "Обычная", "Локальные работы", None)
+    engineer = Engineer("e", "A", *OFFICE, "08:00", "18:00", ["Локальные работы"], "Пешеход")
+
+    reason = explain_unassigned(order, [engineer], None, not_before_min=11 * 60)
+
+    assert "закрылось раньше момента события" in reason

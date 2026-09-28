@@ -1169,3 +1169,62 @@ def test_apply_engineer_unavailable_noop_does_not_resimulate_against_different_m
     assert e1_route["stops"][0]["arrival"] == "11:00"  # исходные данные как есть, без пересимуляции
     assert diff["reassigned"] == []
     assert diff["routes_changed"] == []
+
+
+def test_urgent_order_takes_earliest_slot_not_cheapest_mileage(tmp_path):
+    # Срочная заявка ставится на самое раннее допустимое время: e1 занят до
+    # ~15:05 (и «дешевле» по пробегу, т.к. рядом), e2 свободен и приедет
+    # около 12:20 — срочная должна достаться e2.
+    busy = Order("busy", 55.745, 37.600, 240, "11:05", "11:10", "Обычная", "Локальные работы", None)
+    engineers = [
+        Engineer("e1", "Занят", *OFFICE, "08:00", "20:00", ["Локальные работы"], "Пешеход"),
+        Engineer("e2", "Свободен", *OFFICE, "08:00", "20:00", ["Локальные работы"], "Пешеход"),
+    ]
+    assignment = _assignment([_route("e1", "Занят", [_stop("busy", "11:05")])])
+    event = ReplanEvent(
+        type="new_urgent_order", event_time="11:00",
+        new_order=Order("urgent", 55.7451, 37.6001, 30, "11:00", "18:00", "Срочная", "Локальные работы", None),
+    )
+
+    plan, diff = apply_event(event, [busy], engineers, OFFICE, assignment, _builder(tmp_path))
+
+    placed = diff["newly_assigned"][0]
+    assert placed["engineer_id"] == "e2"
+    assert "11:00" <= placed["arrival"] < "13:00"
+
+
+def test_normal_new_order_still_uses_cheapest_mileage(tmp_path):
+    # Та же ситуация, но заявка обычная: выбирается минимальный пробег (e1).
+    busy = Order("busy", 55.745, 37.600, 240, "11:05", "11:10", "Обычная", "Локальные работы", None)
+    engineers = [
+        Engineer("e1", "Занят", *OFFICE, "08:00", "20:00", ["Локальные работы"], "Пешеход"),
+        Engineer("e2", "Свободен", *OFFICE, "08:00", "20:00", ["Локальные работы"], "Пешеход"),
+    ]
+    assignment = _assignment([_route("e1", "Занят", [_stop("busy", "11:05")])])
+    event = ReplanEvent(
+        type="new_urgent_order", event_time="11:00",
+        new_order=Order("regular", 55.7451, 37.6001, 30, "11:00", "18:00", "Обычная", "Локальные работы", None),
+    )
+
+    plan, diff = apply_event(event, [busy], engineers, OFFICE, assignment, _builder(tmp_path))
+
+    assert diff["newly_assigned"][0]["engineer_id"] == "e1"
+
+
+def test_replan_unassigned_reason_does_not_claim_busy_for_unavailable_engineer(tmp_path):
+    # Единственный подходящий инженер недоступен до конца дня (окно из
+    # предыдущего события сессии): причина не должна говорить «заняты
+    # другими заявками» или «не успевает доехать».
+    engineers = [Engineer("e1", "Один", *OFFICE, "08:00", "20:00", ["Локальные работы"], "Пешеход")]
+    event = ReplanEvent(
+        type="new_urgent_order", event_time="11:00",
+        new_order=Order("urgent", 55.701, 37.601, 30, "11:00", "18:00", "Срочная", "Локальные работы", None),
+    )
+
+    plan, diff = apply_event(
+        event, [], engineers, OFFICE, _assignment([]), _builder(tmp_path), blackouts={"e1": [(0, 1440)]}
+    )
+
+    reason = diff["newly_unassigned"][0]["reason"]
+    assert "заняты другими заявками" not in reason
+    assert "Не успевает доехать" not in reason

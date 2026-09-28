@@ -1,7 +1,10 @@
 """Человекочитаемые причины назначения/отказа для заявок (ТЗ §2.4.2)."""
 from __future__ import annotations
 
-from routing.models import Engineer, Order, parse_hhmm
+import math
+
+from routing.distance_matrix import VEHICLE_TO_PROFILE
+from routing.models import Engineer, Order, format_hhmm, parse_hhmm
 
 
 def _windows_overlap(a_start: str, a_end: str, b_start: str, b_end: str) -> bool:
@@ -36,7 +39,16 @@ def _feasible_engineers(order: Order, engineers: list[Engineer]) -> list[Enginee
     return [e for e in _with_skill_and_transport(order, engineers) if _fits_within_shift(order, e)]
 
 
-def explain_unassigned(order: Order, engineers: list[Engineer]) -> str:
+def explain_unassigned(
+    order: Order,
+    engineers: list[Engineer],
+    travel_min=None,
+    not_before_min: int = 0,
+) -> str:
+    """Понятная диспетчеру причина, почему заявка не назначена. travel_min —
+    необязательная функция engineer -> минуты дороги из офиса до заявки
+    (см. office_travel_fn); not_before_min — момент события в минутах: раньше
+    него никто выехать не может (нужно при перепланировании)."""
     with_skill = [e for e in engineers if order.required_skill in e.skills]
     if not with_skill:
         return f"Нет ни одного инженера с навыком «{order.required_skill}»"
@@ -65,16 +77,78 @@ def explain_unassigned(order: Order, engineers: list[Engineer]) -> str:
             f"{order.window_start}–{order.window_end}"
         )
 
-    # Навык, транспорт и время подходят, но заявку никому не поставили.
-    # Точную причину (занятость, дорога, конкуренция за маршрут) отсюда
-    # не определить — нет расписания и матрицы расстояний, поэтому
-    # формулировка общая. Кандидатов может быть и один.
-    candidate_word = "инженер" if len(overlapping_shift) == 1 else "инженеры"
+    fitting = [e for e in overlapping_shift if _fits_within_shift(order, e)]
+
+    if not_before_min > parse_hhmm(order.window_end):
+        return (
+            f"Окно заявки {order.window_start}–{order.window_end} закрылось раньше "
+            f"момента события ({format_hhmm(not_before_min)})"
+        )
+
+    if travel_min is not None:
+        reason = _explain_by_travel(order, fitting, travel_min)
+        if reason is not None:
+            return reason
+        return (
+            "Подходящие по навыку и времени инженеры есть, но встроить заявку "
+            "в их маршруты не удалось: в это время они заняты другими заявками"
+        )
+
+    # Без данных о дороге (или при перепланировании, где инженеры уже не в
+    # офисе) точную причину не определить — формулировка общая.
+    who = "подходит один инженер" if len(fitting) == 1 else "подходят инженеры"
     return (
-        f"Формально подходящий по навыку, транспорту и времени {candidate_word} "
-        f"есть, но заявку в итоге никому не поставили — точная причина "
-        f"зависит от маршрута и расстояния до неё, а не только от навыка и времени"
+        f"Формально {who} (по навыку, транспорту и времени), но заявку не удалось "
+        f"встроить в маршруты с учётом текущего плана"
     )
+
+
+def _explain_by_travel(order: Order, engineers: list[Engineer], travel_min) -> str | None:
+    """Конкретная причина по дороге из офиса (только для первичного плана,
+    где все инженеры стартуют из офиса в начале смены). None — если хотя бы
+    один инженер в одиночку успел бы (тогда заявка не встроилась из-за
+    других заявок в маршрутах)."""
+    window_start = parse_hhmm(order.window_start)
+    window_end = parse_hhmm(order.window_end)
+
+    late_travels: list[float] = []
+    no_room_travels: list[float] = []
+    for engineer in engineers:
+        travel = travel_min(engineer)
+        if not math.isfinite(travel):
+            continue
+        start = max(parse_hhmm(engineer.shift_start) + round(travel), window_start)
+        if start > window_end:
+            late_travels.append(travel)
+        elif start + order.duration_min > parse_hhmm(engineer.shift_end):
+            no_room_travels.append(travel)
+        else:
+            return None
+
+    if late_travels:
+        return (
+            f"Не успевает доехать: подходящему инженеру ехать от {round(min(late_travels))} мин, "
+            f"а окно {order.window_start}–{order.window_end} закрывается раньше"
+        )
+    if no_room_travels:
+        return (
+            f"После дороги (от {round(min(no_room_travels))} мин) работа на "
+            f"{order.duration_min} мин не укладывается в смену подходящих инженеров"
+        )
+    return "До заявки нет пути для транспорта подходящих инженеров"
+
+
+def office_travel_fn(matrices: dict, office_index: int, order_index: int):
+    """travel_min для explain_unassigned: минуты дороги из офиса до заявки
+    по матрице профиля транспорта инженера (inf, если профиля нет)."""
+
+    def travel(engineer: Engineer) -> float:
+        matrix = matrices.get(VEHICLE_TO_PROFILE[engineer.vehicle])
+        if matrix is None:
+            return math.inf
+        return matrix.duration_min[(office_index, order_index)]
+
+    return travel
 
 
 def explain_assigned(order: Order, engineer: Engineer, engineers: list[Engineer]) -> str:

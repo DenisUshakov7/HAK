@@ -21,6 +21,10 @@ from routing.models import Engineer, Order, format_hhmm, load_engineers, load_of
 
 logger = logging.getLogger(__name__)
 
+URGENT_PLACED_REASON = (
+    "Срочная заявка — поставлена на самое раннее допустимое время среди подходящих инженеров"
+)
+
 # engineer_id -> [(from_min, until_min), ...]: окна, в которых инженер не
 # начинает работу (until_min = 1440 для «до конца смены»).
 Blackouts = dict[str, list[tuple[int, int]]]
@@ -169,14 +173,18 @@ def _find_cheapest_insertion(
     point_index: dict[str, int],
     blackouts: Blackouts | None = None,
 ) -> tuple[float, str, int] | None:
-    """Ищет (стоимость, engineer_id, позиция) с минимальной добавленной
-    дистанцией среди всех подходящих инженеров и всех открытых (не
-    замороженных) позиций их маршрутов. Стоимость — стандартная
-    VRP-формула вставки (d(prev,new)+d(new,next)-d(prev,next)), полная
-    пересимуляция хвоста нужна только для проверки допустимости, не для
-    стоимости. blackouts уже включает окно [0, event_time) для каждого
-    инженера (см. apply_event), поэтому заявка не получит время раньше
-    самого события. None, если нигде не влезает."""
+    """Ищет (стоимость, engineer_id, позиция) среди всех подходящих
+    инженеров и всех открытых (не замороженных) позиций их маршрутов.
+    Обычная заявка — с минимальной добавленной дистанцией (стандартная
+    VRP-формула вставки d(prev,new)+d(new,next)-d(prev,next)); полная
+    пересимуляция хвоста нужна только для проверки допустимости. Срочная —
+    с самым ранним временем начала работы, при равенстве — с минимальной
+    дистанцией (организаторы допускают для аварии реакцию за 1–2 часа).
+    blackouts уже включает окно [0, event_time) для каждого инженера
+    (см. apply_event), поэтому заявка не получит время раньше самого
+    события. None, если нигде не влезает."""
+    earliest_first = new_order.priority == "Срочная"
+    best_key: tuple | None = None
     best: tuple[float, str, int] | None = None
     for engineer in engineers:
         if new_order.required_skill not in engineer.skills:
@@ -201,15 +209,19 @@ def _find_cheapest_insertion(
             else:
                 cost = d_prev_new
 
-            if best is not None and cost >= best[0]:
+            if not earliest_first and best is not None and cost >= best[0]:
                 continue
 
             start_time = departure_after[engineer.id][pos]
             new_tail = [new_order.id] + route[pos:]
-            if _simulate_tail(engineer, prev_id, start_time, new_tail, orders_by_id, matrix, point_index, windows) is None:
+            timings = _simulate_tail(engineer, prev_id, start_time, new_tail, orders_by_id, matrix, point_index, windows)
+            if timings is None:
                 continue
 
-            best = (cost, engineer.id, pos)
+            key = (timings[0].arrival_min, cost) if earliest_first else (cost,)
+            if best_key is None or key < best_key:
+                best_key = key
+                best = (cost, engineer.id, pos)
 
     return best
 
@@ -273,6 +285,7 @@ class _PlanState:
     # Инженеры, у которых в этом apply_event вставили или сняли остановку;
     # остальные маршруты берутся из исходного плана как есть.
     touched: set[str] = field(default_factory=set)
+    event_time_min: int = 0  # момент события: раньше него никто не выезжает
 
 
 def _load_current_state(
@@ -366,6 +379,19 @@ def _resimulate_tail(
     return timings
 
 
+def _explain_unassigned(
+    order: Order,
+    engineers: list[Engineer],
+    state: _PlanState,
+    matrices: dict[str, MatrixResult],
+    point_index: dict[str, int],
+) -> str:
+    """Причина отказа с учётом момента события. Расчёт «по дороге из офиса»
+    здесь не применяется: при перепланировании инженеры уже не в офисе,
+    могут быть недоступны, и такая причина была бы неверной."""
+    return explain_unassigned(order, engineers, None, state.event_time_min)
+
+
 def _reinsert_orphan(
     order_id: str,
     from_engineer_id: str,
@@ -385,7 +411,7 @@ def _reinsert_orphan(
         orders_by_id, matrices, point_index, blackouts=state.blackouts,
     )
     if result is None:
-        reason = explain_unassigned(order, engineers)
+        reason = _explain_unassigned(order, engineers, state, matrices, point_index)
         state.unassigned_reasons[order_id] = reason
         return [ChangeRecord(kind="newly_unassigned", order_id=order_id, reason=reason)]
 
@@ -399,6 +425,7 @@ def _reinsert_orphan(
         ChangeRecord(
             kind="reassigned", order_id=order_id, engineer_id=new_engineer_id,
             from_engineer_id=from_engineer_id, arrival_min=arrival_min,
+            reason=URGENT_PLACED_REASON if order.priority == "Срочная" else None,
         )
     ]
 
@@ -433,7 +460,7 @@ def _apply_new_urgent_order(
             result = (0.0, engineer_id, pos)
 
     if result is None:
-        reason = explain_unassigned(new_order, engineers)
+        reason = _explain_unassigned(new_order, engineers, state, matrices, point_index)
         state.unassigned_reasons[new_order.id] = reason
         changes.append(ChangeRecord(kind="newly_unassigned", order_id=new_order.id, reason=reason))
         return changes
@@ -444,15 +471,16 @@ def _apply_new_urgent_order(
     engineer = engineers_by_id[engineer_id]
     timings = _resimulate_tail(engineer, state, orders_by_id, matrices, point_index)
     arrival_min = next(t.arrival_min for t in timings if t.order_id == new_order.id)
-    # Вытеснение — не минимизация пробега, поэтому причина задаётся явно.
-    placed_reason = (
-        (
+    # Срочная — не минимизация пробега, поэтому причина задаётся явно.
+    if evicted_order_id is not None:
+        placed_reason = (
             f"Срочная заявка — вытеснила ещё не начатую заявку {evicted_order_id!r} "
             f"с приоритетом «Обычная», другого места не нашлось"
         )
-        if evicted_order_id is not None
-        else None
-    )
+    elif new_order.priority == "Срочная":
+        placed_reason = URGENT_PLACED_REASON
+    else:
+        placed_reason = None
     changes.append(
         ChangeRecord(
             kind="newly_assigned", order_id=new_order.id, engineer_id=engineer_id,
@@ -749,7 +777,7 @@ def apply_event(
     state = _PlanState(
         routes=routes, original_reasons=original_reasons, unassigned_reasons=unassigned_reasons,
         departure_after=departure_after, frozen_counts=frozen_counts,
-        blackouts=plan_blackouts,
+        blackouts=plan_blackouts, event_time_min=event_time_min,
     )
 
     point_ids = ["__office__"] + list(orders_by_id.keys())

@@ -11,7 +11,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from routing.distance_matrix import DEFAULT_CACHE_PATH, VEHICLE_TO_PROFILE, DistanceMatrixBuilder
-from routing.explain import explain_assigned, explain_unassigned
+from routing.explain import explain_assigned, explain_unassigned, office_travel_fn
 from routing.models import format_hhmm, load_engineers, load_office_coords, load_orders
 from routing.solve import solve
 
@@ -70,7 +70,12 @@ def run(
         )
 
     unassigned_out = [
-        {"order_id": orders[idx].id, "reason": explain_unassigned(orders[idx], engineers)}
+        {
+            "order_id": orders[idx].id,
+            "reason": explain_unassigned(
+                orders[idx], engineers, office_travel_fn(matrices, 0, idx + 1)
+            ),
+        }
         for idx in result.unassigned_order_indices
     ]
 
