@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import re
 from dataclasses import dataclass
@@ -19,6 +20,8 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 USER_AGENT = "beeline-fsm-hackathon-etl"
+# Дальше этого расстояния от центра района найденная точка считается ошибкой.
+MAX_DISTRICT_DISTANCE_KM = 15.0
 DEFAULT_CACHE_PATH = Path(__file__).parent / "data" / "reference" / "geocode_cache.json"
 DEFAULT_FALLBACK_PATH = Path(__file__).parent / "data" / "reference" / "geocode_fallback.json"
 
@@ -102,6 +105,12 @@ def normalize_address_for_nominatim(address: str) -> str:
     return collapsed.strip(" ,")
 
 
+def _haversine_km(a: tuple[float, float], b: tuple[float, float]) -> float:
+    lat1, lon1, lat2, lon2 = map(math.radians, (a[0], a[1], b[0], b[1]))
+    h = math.sin((lat2 - lat1) / 2) ** 2 + math.cos(lat1) * math.cos(lat2) * math.sin((lon2 - lon1) / 2) ** 2
+    return 2 * 6371.0 * math.asin(math.sqrt(h))
+
+
 @dataclass(frozen=True)
 class GeocodeResult:
     lat: float
@@ -162,15 +171,31 @@ class Geocoder:
         lat, lon = self._fallback_default
         return GeocodeResult(lat=lat, lon=lon, source="fallback:default")
 
+    def _is_plausible(self, lat: float, lon: float, district: str | None) -> bool:
+        """Точка должна лежать недалеко от центра района из заявки. Иначе
+        Nominatim, скорее всего, нашёл однофамильную улицу в другом городе."""
+        centroid = self._fallback_centroids.get(district) if district else None
+        if centroid is None:
+            return True
+        return _haversine_km(centroid, (lat, lon)) <= MAX_DISTRICT_DISTANCE_KM
+
     def geocode_address(self, address: str, district: str | None = None) -> GeocodeResult:
         key = address.strip().lower()
         if key in self._cache:
             lat, lon = self._cache[key]
-            return GeocodeResult(lat=lat, lon=lon, source="cache")
+            if self._is_plausible(lat, lon, district):
+                return GeocodeResult(lat=lat, lon=lon, source="cache")
+            logger.warning("Адрес %r найден слишком далеко от района %r — используем фолбэк", address, district)
+            return self._fallback(district)
 
         if not self.force_fallback:
             location = self._geocode_via_nominatim(address)
             if location is not None:
+                if not self._is_plausible(location.latitude, location.longitude, district):
+                    logger.warning(
+                        "Адрес %r найден слишком далеко от района %r — используем фолбэк", address, district
+                    )
+                    return self._fallback(district)
                 result = GeocodeResult(lat=location.latitude, lon=location.longitude, source="nominatim")
                 self._cache[key] = [result.lat, result.lon]
                 self._save_cache()

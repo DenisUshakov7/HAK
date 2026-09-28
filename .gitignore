@@ -4,6 +4,5 @@ __pycache__/
 venv/
 .pytest_cache/
 data/reference/geocode_cache.json
-data/reference/routing_cache.json
 .env
 .streamlit/secrets.toml

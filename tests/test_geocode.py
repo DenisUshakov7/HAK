@@ -146,3 +146,44 @@ def test_normalize_handles_abbreviations_without_trailing_dot():
     # в наихудший fallback:default вместо реальных координат.
     result = normalize_address_for_nominatim("г. Москва, ул Юных Ленинцев, д 83с 4")
     assert result == "Москва, улица Юных Ленинцев, 83с 4"
+
+
+def test_far_cache_hit_for_district_falls_back_to_centroid(tmp_path):
+    # Однофамильная улица в другом городе: точка в кэше далеко от района.
+    fallback_path = _write_fallback(tmp_path)
+    cache_path = tmp_path / "geocode_cache.json"
+    cache_path.write_text(json.dumps({"ул.окская, д. 32": [55.50, 37.58]}), encoding="utf-8")
+    geocoder = Geocoder(cache_path=cache_path, fallback_path=fallback_path, force_fallback=True)
+
+    result = geocoder.geocode_address("ул.Окская, д. 32", "Кузьминки")
+
+    assert (result.lat, result.lon) == (55.705, 37.755)
+    assert result.source == "fallback:Кузьминки"
+
+
+def test_far_nominatim_result_for_district_is_rejected_and_not_cached(tmp_path):
+    fallback_path = _write_fallback(tmp_path)
+    cache_path = tmp_path / "geocode_cache.json"
+    geocoder = Geocoder(cache_path=cache_path, fallback_path=fallback_path, force_fallback=False)
+
+    class Location:
+        latitude, longitude = 55.50, 37.58
+
+    geocoder._nominatim_geocode = lambda query: Location()
+
+    result = geocoder.geocode_address("ул.Окская, д. 32", "Кузьминки")
+
+    assert result.source == "fallback:Кузьминки"
+    assert not cache_path.exists() or "ул.окская, д. 32" not in cache_path.read_text(encoding="utf-8")
+
+
+def test_nearby_cache_hit_for_district_is_kept(tmp_path):
+    fallback_path = _write_fallback(tmp_path)
+    cache_path = tmp_path / "geocode_cache.json"
+    cache_path.write_text(json.dumps({"ул.окская, д. 32": [55.71, 37.76]}), encoding="utf-8")
+    geocoder = Geocoder(cache_path=cache_path, fallback_path=fallback_path, force_fallback=True)
+
+    result = geocoder.geocode_address("ул.Окская, д. 32", "Кузьминки")
+
+    assert (result.lat, result.lon) == (55.71, 37.76)
+    assert result.source == "cache"
