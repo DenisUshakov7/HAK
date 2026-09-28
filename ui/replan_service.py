@@ -34,6 +34,7 @@ class Inputs:
     office: tuple[float, float]
     assignment: dict
     addresses: dict[str, str] = field(default_factory=dict)
+    geocode_sources: dict[str, str] = field(default_factory=dict)
 
 
 def load_inputs(
@@ -42,6 +43,7 @@ def load_inputs(
     raw_orders = json.loads(orders_path.read_text(encoding="utf-8"))
     return Inputs(
         addresses={r["id"]: r["address"] for r in raw_orders if r.get("address")},
+        geocode_sources={r["id"]: r["geocode_source"] for r in raw_orders if r.get("geocode_source")},
         orders=load_orders(orders_path),
         engineers=load_engineers(engineers_path),
         office=load_office_coords(offices_path),
@@ -223,6 +225,7 @@ def render_map_html(
     *,
     force_fallback: bool,
     cache_path: Path = DEFAULT_CACHE_PATH,
+    order_details: dict[str, dict] | None = None,
 ) -> str:
     """Рендерит карту плана в HTML-строку через существующий
     routemap.build_map.run: входы пишутся во временный каталог (в orders
@@ -236,7 +239,8 @@ def render_map_html(
         engineers_path = tmp_path / "engineers.json"
         offices_path = tmp_path / "offices.json"
         assignment_path = tmp_path / "assignment.json"
-        orders_path.write_text(json.dumps([asdict(o) for o in orders], ensure_ascii=False), encoding="utf-8")
+        records = [{**asdict(o), **(order_details or {}).get(o.id, {})} for o in orders]
+        orders_path.write_text(json.dumps(records, ensure_ascii=False), encoding="utf-8")
         engineers_path.write_text(
             json.dumps([asdict(e) for e in engineers], ensure_ascii=False), encoding="utf-8"
         )

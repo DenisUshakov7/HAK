@@ -122,6 +122,21 @@ def _numbered_icon(seq: int, color: str) -> folium.DivIcon:
     )
 
 
+def _order_details_html(order: Order, raw: dict) -> str:
+    """Тип работ, адрес, окно, длительность и приоритет заявки для подсказки;
+    адрес и признак приблизительных координат берутся из сырого orders.json."""
+    lines = [f"Тип работ: {order.required_skill}"]
+    if raw.get("address"):
+        lines.append(f"Адрес: {raw['address']}")
+    lines.append(
+        f"Окно начала: {order.window_start}–{order.window_end}; "
+        f"длительность: {order.duration_min} мин; приоритет: {order.priority}"
+    )
+    if str(raw.get("geocode_source", "")).startswith("fallback"):
+        lines.append("Координаты приблизительные (центр района)")
+    return "<br>".join(html_lib.escape(line) for line in lines) + "<br>"
+
+
 def run(
     orders_path: Path,
     engineers_path: Path,
@@ -133,6 +148,7 @@ def run(
     comparison_path: Path = Path("data/output/comparison.json"),
 ) -> Path:
     orders = load_orders(orders_path)
+    raw_orders = {r["id"]: r for r in json.loads(orders_path.read_text(encoding="utf-8"))}
     engineers = load_engineers(engineers_path)
     office = load_office_coords(offices_path)
     assignment = json.loads(assignment_path.read_text(encoding="utf-8"))
@@ -180,6 +196,7 @@ def run(
             points.append((order.lat, order.lon))
             popup_html = (
                 f"<b>Заявка {html_lib.escape(stop['order_id'])}</b><br>"
+                f"{_order_details_html(order, raw_orders.get(order.id, {}))}"
                 f"Инженер: {html_lib.escape(route['engineer_name'])}<br>"
                 f"Прибытие: {html_lib.escape(stop['arrival'])}<br>"
                 f"Пробег до этой точки: {stop['distance_km']} км<br>"
@@ -188,7 +205,7 @@ def run(
             folium.Marker(
                 location=(order.lat, order.lon),
                 icon=_numbered_icon(seq, color),
-                popup=folium.Popup(popup_html, max_width=300),
+                popup=folium.Popup(popup_html, max_width=340),
             ).add_to(m)
 
         engineer = _engineer_or_raise(route["engineer_id"])
@@ -201,12 +218,13 @@ def run(
         order = _order_or_raise(u["order_id"])
         popup_html = (
             f"<b>Заявка {html_lib.escape(u['order_id'])} — не назначена</b><br>"
+            f"{_order_details_html(order, raw_orders.get(order.id, {}))}"
             f"{html_lib.escape(u['reason'])}"
         )
         folium.Marker(
             location=(order.lat, order.lon),
             icon=folium.Icon(icon="remove", color="gray"),
-            popup=folium.Popup(popup_html, max_width=300),
+            popup=folium.Popup(popup_html, max_width=340),
         ).add_to(m)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)

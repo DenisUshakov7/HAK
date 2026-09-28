@@ -677,3 +677,45 @@ def test_run_omits_comparison_block_when_file_absent(tmp_path):
 
     content = result.read_text(encoding="utf-8")
     assert "Сравнение с базовым вариантом" not in content
+
+
+def test_run_popups_show_order_details_and_approximate_coordinates(tmp_path):
+    orders_path, engineers_path, offices_path = _write_common_inputs(tmp_path, [("eng_01", "Тест Тестов")])
+    records = json.loads(orders_path.read_text(encoding="utf-8"))
+    records[0].update(address="Москва, ул. Тестовая, 1", window_start="12:00", window_end="14:00", duration_min=45)
+    records[1].update(address="Москва, ул. Другая, 2", geocode_source="fallback:Кузьминки", priority="Срочная")
+    orders_path.write_text(json.dumps(records, ensure_ascii=False), encoding="utf-8")
+    assignment_path = tmp_path / "assignment.json"
+    assignment_path.write_text(
+        json.dumps(
+            {
+                "routes": [
+                    {
+                        "engineer_id": "eng_01", "engineer_name": "Тест Тестов",
+                        "stops": [{"order_id": "1", "arrival": "12:10", "travel_min": 5, "distance_km": 1.2, "reason": "Причина"}],
+                        "total_distance_km": 1.2,
+                    }
+                ],
+                "unassigned": [{"order_id": "2", "reason": "Причина отказа"}],
+                "metrics": {"engineers_used": 1, "total_distance_km": 1.2, "orders_assigned": 1, "orders_unassigned": 1},
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    output_path = tmp_path / "route_map.html"
+
+    run(
+        orders_path=orders_path, engineers_path=engineers_path, offices_path=offices_path,
+        assignment_path=assignment_path, output_path=output_path, cache_path=tmp_path / "cache.json",
+        force_fallback=True, comparison_path=tmp_path / "no_comparison.json",
+    )
+
+    content = output_path.read_text(encoding="utf-8")
+    assert "Тип работ: Локальные работы" in content
+    assert "Адрес: Москва, ул. Тестовая, 1" in content
+    assert "Окно начала: 12:00–14:00" in content
+    assert "длительность: 45 мин" in content
+    assert "Адрес: Москва, ул. Другая, 2" in content  # и у неназначенной
+    assert "приоритет: Срочная" in content
+    assert content.count("Координаты приблизительные") == 1  # только у заявки 2

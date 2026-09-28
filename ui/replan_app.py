@@ -57,10 +57,15 @@ def _maps(no_network: bool) -> dict:
     inputs = st.session_state.inputs
     session = st.session_state.session
     orders = list(inputs.orders) + list(session.extra_orders)
+    details = {
+        order_id: {"address": address, "geocode_source": inputs.geocode_sources.get(order_id, "")}
+        for order_id, address in {**inputs.addresses, **session.extra_addresses}.items()
+    }
 
     def render(plan: dict) -> str:
         return svc.render_map_html(
-            plan, orders, inputs.engineers, inputs.office, force_fallback=no_network
+            plan, orders, inputs.engineers, inputs.office, force_fallback=no_network,
+            order_details=details,
         )
 
     st.session_state.maps = {

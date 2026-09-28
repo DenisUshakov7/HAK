@@ -609,3 +609,17 @@ def test_describe_diff_same_engineer_reassignment_says_shifted():
     assert len(lines) == 1
     assert "остаётся у инженера Иванов (e1)" in lines[0]
     assert "сдвинута на 12:10" in lines[0]
+
+
+def test_render_map_html_shows_order_details_from_order_details(tmp_path):
+    inputs = _inputs()
+
+    html = render_map_html(
+        inputs.assignment, list(inputs.orders), inputs.engineers, inputs.office,
+        force_fallback=True, cache_path=tmp_path / "cache.json",
+        order_details={"1": {"address": "Москва, ул. Пример, 5", "geocode_source": "fallback:Кузьминки"}},
+    )
+
+    assert "Адрес: Москва, ул. Пример, 5" in html
+    assert "Тип работ: Локальные работы" in html
+    assert "Координаты приблизительные" in html
