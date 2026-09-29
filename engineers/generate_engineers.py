@@ -28,10 +28,14 @@ VEHICLES = ["Автомобиль", "Пешеход", "Велосипед", "О�
 # велосипед — меньшинство.
 VEHICLE_WEIGHTS = [0.20, 0.35, 0.10, 0.35]
 
-SHIFT_DURATIONS = [4, 5, 6, 7, 8, 9]
-# 8 и 9 часов (полная смена) — большинство (~60% суммарно), 6-7 часов —
-# ~25%, 4-5 часов (неполная занятость) — меньшинство ~15%.
-SHIFT_DURATION_WEIGHTS = [0.075, 0.075, 0.125, 0.125, 0.30, 0.30]
+# Два графика работы бригад (Q&A постановщика, 29 сентября): график
+# задаётся на уровне бригады, а не офиса — в одном офисе могут работать
+# бригады с разными графиками. В Москве преимущественно используется
+# график 2/2 (смена примерно 10:00-22:00), для 5/2 постановщик прямо
+# назвал 09:00-18:00. Соотношение 2/2:5/2 официально не задано — 70/30 в
+# пользу 2/2 как реализация слова «преимущественно» (явное допущение).
+SHIFT_PATTERNS = [("10:00", "22:00"), ("09:00", "18:00")]
+SHIFT_PATTERN_WEIGHTS = [0.7, 0.3]
 
 DEFAULT_SEED = 20260817
 DEFAULT_COUNT = 12
@@ -124,9 +128,7 @@ def generate_engineers(
         skills = _pick_skills(group_counters[skill_count], skill_count)
         group_counters[skill_count] += 1
 
-        duration = rng.choices(SHIFT_DURATIONS, weights=SHIFT_DURATION_WEIGHTS, k=1)[0]
-        max_start = min(20, 23 - duration)
-        start_hour = rng.randint(8, max_start)
+        shift_start, shift_end = rng.choices(SHIFT_PATTERNS, weights=SHIFT_PATTERN_WEIGHTS, k=1)[0]
 
         engineers.append(
             Engineer(
@@ -134,8 +136,8 @@ def generate_engineers(
                 name=names[i],
                 start_lat=office_lat,
                 start_lon=office_lon,
-                shift_start=_format_hh_mm(start_hour),
-                shift_end=_format_hh_mm(start_hour + duration),
+                shift_start=shift_start,
+                shift_end=shift_end,
                 skills=skills,
                 vehicle=vehicles[i],
             )

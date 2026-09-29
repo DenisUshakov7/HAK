@@ -6,8 +6,8 @@ import pytest
 from engineers.generate_engineers import (
     DEFAULT_COUNT,
     DEFAULT_SEED,
-    SHIFT_DURATION_WEIGHTS,
-    SHIFT_DURATIONS,
+    SHIFT_PATTERN_WEIGHTS,
+    SHIFT_PATTERNS,
     SKILLS,
     VEHICLE_WEIGHTS,
     VEHICLES,
@@ -31,7 +31,8 @@ def test_skills_vehicles_reference_lists_match_spec():
     ]
     assert VEHICLES == ["Автомобиль", "Пешеход", "Велосипед", "Общественный транспорт"]
     assert len(VEHICLE_WEIGHTS) == len(VEHICLES)
-    assert len(SHIFT_DURATION_WEIGHTS) == len(SHIFT_DURATIONS)
+    assert SHIFT_PATTERNS == [("10:00", "22:00"), ("09:00", "18:00")]
+    assert len(SHIFT_PATTERN_WEIGHTS) == len(SHIFT_PATTERNS)
 
 
 def test_format_hh_mm():
@@ -172,17 +173,22 @@ def test_generate_engineers_covers_all_vehicle_types():
     assert vehicles_seen == set(VEHICLES)
 
 
-def test_generate_engineers_shift_bounds_and_duration():
+def test_generate_engineers_shift_matches_one_of_two_patterns():
+    # Q&A постановщика: два графика бригад — 2/2 (10:00-22:00) и 5/2
+    # (09:00-18:00), другой смены быть не должно.
     engineers = generate_engineers(NAME_POOL, office_lat=55.7, office_lon=37.6, count=12, seed=7)
 
     for e in engineers:
-        start_hour = int(e.shift_start.split(":")[0])
-        end_hour = int(e.shift_end.split(":")[0])
-        duration = end_hour - start_hour
+        assert (e.shift_start, e.shift_end) in SHIFT_PATTERNS
 
-        assert 8 <= start_hour <= 20
-        assert end_hour <= 23
-        assert duration in SHIFT_DURATIONS
+
+def test_generate_engineers_both_shift_patterns_appear_with_enough_engineers():
+    # На 12 инженерах с весами 70/30 оба графика должны встретиться хотя бы
+    # по разу — иначе демо ничего не показывает про разные графики.
+    engineers = generate_engineers(NAME_POOL, office_lat=55.7, office_lon=37.6, count=12, seed=7)
+
+    shifts_seen = {(e.shift_start, e.shift_end) for e in engineers}
+    assert shifts_seen == set(SHIFT_PATTERNS)
 
 
 def test_generate_engineers_start_point_matches_office():
