@@ -116,28 +116,40 @@ with st.sidebar:
     st.header("Событие")
     kind_label = st.selectbox("Тип события", list(KIND_LABELS), key="event_kind")
     kind = KIND_LABELS[kind_label]
-    st.text_input("Время события (ЧЧ:ММ)", value="11:00", key="event_time")
 
-    if kind == svc.KIND_URGENT:
-        st.text_input("Адрес заявки", key="address", placeholder="Москва, ул. Окская, 1")
-        st.selectbox("Требуемый навык", svc.SKILLS, key="skill")
-        st.number_input("Длительность, мин", min_value=5, max_value=480, value=30, key="duration")
-        st.text_input("Окно: начало (ЧЧ:ММ)", value="11:00", key="window_start")
-        st.text_input("Окно: конец (ЧЧ:ММ)", value="18:00", key="window_end")
-    elif kind == svc.KIND_CANCEL:
-        st.selectbox("Заявка", svc.plan_order_ids(session.current_plan), key="cancel_order")
-    else:
-        names = {e.id: e.name for e in inputs.engineers}
-        st.selectbox(
-            "Инженер", list(names), format_func=lambda eid: f"{names[eid]} ({eid})", key="unavail_engineer"
-        )
-        st.text_input("Недоступен с (пусто = время события)", key="unavail_from", placeholder="12:00")
-        st.text_input("Недоступен до (пусто = до конца смены)", key="unavail_until", placeholder="13:30")
+    # Поля события и кнопка "Перестроить" — внутри одной формы: без неё
+    # каждое текстовое поле шлёт своё обновление в session_state отдельным
+    # запросом (нет form_submit_button — нет общей "посылки"), и клик по
+    # кнопке сразу после правки текста иногда обгонял ещё не долетевшее
+    # обновление поля — событие пересчитывалось со старым значением адреса.
+    # Форма гарантирует: все поля коммитятся в session_state одним пакетом
+    # непосредственно перед тем, как apply_clicked становится True.
+    with st.form("event_form"):
+        st.text_input("Время события (ЧЧ:ММ)", value="11:00", key="event_time")
 
+        if kind == svc.KIND_URGENT:
+            st.text_input("Адрес заявки", key="address", placeholder="Москва, ул. Окская, 1")
+            st.selectbox("Требуемый навык", svc.SKILLS, key="skill")
+            st.number_input("Длительность, мин", min_value=5, max_value=480, value=30, key="duration")
+            st.text_input("Окно: начало (ЧЧ:ММ)", value="11:00", key="window_start")
+            st.text_input("Окно: конец (ЧЧ:ММ)", value="18:00", key="window_end")
+        elif kind == svc.KIND_CANCEL:
+            st.selectbox("Заявка", svc.plan_order_ids(session.current_plan), key="cancel_order")
+        else:
+            names = {e.id: e.name for e in inputs.engineers}
+            st.selectbox(
+                "Инженер", list(names), format_func=lambda eid: f"{names[eid]} ({eid})", key="unavail_engineer"
+            )
+            st.text_input("Недоступен с (пусто = время события)", key="unavail_from", placeholder="12:00")
+            st.text_input("Недоступен до (пусто = до конца смены)", key="unavail_until", placeholder="13:30")
+
+        apply_clicked = st.form_submit_button("Перестроить", type="primary", key="apply")
+
+    # Вне формы — переключается сразу (влияет и на карту без применения
+    # нового события), внутри формы ждал бы отдельного "Перестроить".
     no_network = st.checkbox(
         "Без сети (приближённые расстояния, без геокодинга)", value=False, key="no_network"
     )
-    apply_clicked = st.button("Перестроить", type="primary", key="apply")
     reset_clicked = st.button("Сбросить к исходному плану", key="reset")
 
 if reset_clicked:
