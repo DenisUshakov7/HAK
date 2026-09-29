@@ -22,6 +22,13 @@ logger = logging.getLogger(__name__)
 USER_AGENT = "beeline-fsm-hackathon-etl"
 # Дальше этого расстояния от центра района найденная точка считается ошибкой.
 MAX_DISTRICT_DISTANCE_KM = 15.0
+# Файл лежит в репозитории (не в .gitignore) намеренно: без него на каждом
+# новом деплое (Streamlit Cloud пересоздаёт файловую систему с нуля) кэш
+# пуст, и геокодинг любого адреса идёт только живым запросом к Nominatim с
+# общего исходящего IP бесплатного тарифа — тот нередко попадает под
+# рейт-лимиты/блокировки Nominatim, из-за чего форма "Срочная заявка" в
+# проде стабильно отвечает "адрес не найден" даже на адрес из подсказки
+# в самом поле, хотя тот же запрос с обычной машины находится нормально.
 DEFAULT_CACHE_PATH = Path(__file__).parent / "data" / "reference" / "geocode_cache.json"
 DEFAULT_FALLBACK_PATH = Path(__file__).parent / "data" / "reference" / "geocode_fallback.json"
 
